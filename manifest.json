@@ -1,0 +1,17 @@
+{
+  "name": "かたち パズル",
+  "short_name": "かたちパズル",
+  "description": "3〜7歳向け 型はめパズル（家庭用・オフライン対応）",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#F2F7FF",
+  "theme_color": "#F2F7FF",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
