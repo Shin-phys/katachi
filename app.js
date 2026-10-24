@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.1.0';
+  const APP_VERSION = '1.2.0';
   const ROUND_N = 8;            // 1回の問題数
   const CHECK_N = 8;            // くるくるチェックの問題数
   const FLY_MS = 650;
@@ -411,7 +411,7 @@
   const INTRO = {
     1: ['intro1', 'おなじ かたちを あなまで はこんでね'],
     2: ['intro1', 'おなじ かたちを あなまで はこんでね'],
-    3: ['intro3', 'ピースを タップすると まわるよ。むきが あったら、あなまで はこんでね'],
+    3: ['intro3', 'ピースは タップするか、ゆび 2ほんで ひねると まわるよ。むきが あったら、あなまで はこんでね'],
     4: ['intro4', 'ピースを タップして まわそう。あう ばしょまで はこんで、かたちを つくろう'],
     5: ['intro5', 'あたまの なかで まわしてね。はいる ピースを あなまで はこんでね'],
   };
@@ -589,7 +589,7 @@
     if (!piece || piece.placed) return;
     try { card.setPointerCapture(e.pointerId); } catch (err) { /* 未対応の端末 */ }
     const rect = card.querySelector('.pwrap').getBoundingClientRect();
-    D = { card, idx, piece, pid: e.pointerId, sx: e.clientX, sy: e.clientY, rect, el: null };
+    D = { card, idx, piece, pid: e.pointerId, sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, rect, el: null, twist: null, twisted: false };
   }
 
   function beginDrag() {
@@ -606,32 +606,103 @@
     Sound.fx('lift');
   }
 
+  // ---------- 2本指でひねって回す（レベル3・4だけ。レベル5は頭の中で回すので回せない） ----------
+  const canRotate = () => Q.p && (Q.p.type === 'rotate' || Q.p.type === 'compose');
+  const angleOf = (x1, y1, x2, y2) => (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+  const curRot = () => (D.twist ? D.twist.now : D.piece.rot);
+
+  function showRot() {
+    if (D.el) {
+      D.el.style.transform = tf(D.x - D.sx, D.y - D.sy, curRot(), D.s || 1.06);
+    } else {
+      const pw = D.card.querySelector('.pwrap');
+      pw.style.transition = 'none';
+      pw.style.transform = `rotate(${curRot()}deg)`;
+    }
+  }
+
+  function onAnyDown(e) {
+    if (!D || e.pointerId === D.pid || D.twist || !canRotate()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const a = angleOf(D.x, D.y, e.clientX, e.clientY);
+    D.twist = { pid: e.pointerId, x: e.clientX, y: e.clientY, last: a, acc: 0, base: D.piece.rot, now: D.piece.rot };
+    D.twisted = true;
+  }
+  function onAnyMove(e) {
+    if (!D || !D.twist || e.pointerId !== D.twist.pid) return;
+    D.twist.x = e.clientX;
+    D.twist.y = e.clientY;
+    updateTwist();
+  }
+  function onAnyUp(e) {
+    if (!D || !D.twist || e.pointerId !== D.twist.pid) return;
+    endTwist();
+  }
+  function updateTwist() {
+    const t = D.twist;
+    // 少しずつ足し合わせるので、1回で半回転以上ひねっても向きがずれない
+    const a = angleOf(D.x, D.y, t.x, t.y);
+    t.acc += mod(a - t.last + 180, 360) - 180;
+    t.last = a;
+    t.now = t.base + t.acc;
+    showRot();
+  }
+  // 指を離したら、いちばん近い90度の向きにぴたっと合わせる
+  function endTwist() {
+    const t = D.twist;
+    D.twist = null;
+    const snapped = t.base + Math.round((t.now - t.base) / 90) * 90;
+    D.piece.rot = snapped;
+    if (snapped !== t.base) Sound.fx('turn');
+    if (D.el) {
+      animateEl(D.el, D.el.style.transform, tf(D.x - D.sx, D.y - D.sy, snapped, D.s || 1.06), 160);
+    } else {
+      const pw = D.card.querySelector('.pwrap');
+      pw.style.transition = '';
+      void pw.offsetWidth;
+      pw.style.transform = `rotate(${snapped}deg)`;
+      // ひねり終わってから1本指で運び始めても、ピースが飛ばないように起点を合わせ直す
+      D.sx = D.x;
+      D.sy = D.y;
+    }
+  }
+  document.addEventListener('pointerdown', onAnyDown, true);
+  document.addEventListener('pointermove', onAnyMove, true);
+  document.addEventListener('pointerup', onAnyUp, true);
+  document.addEventListener('pointercancel', onAnyUp, true);
+
   function onCardMove(e) {
     if (!D || e.pointerId !== D.pid) return;
-    const mx = e.clientX - D.sx, my = e.clientY - D.sy;
+    D.x = e.clientX;
+    D.y = e.clientY;
+    if (D.twist) { updateTwist(); return; }   // ひねっている間はその場で回すだけ
+    const mx = D.x - D.sx, my = D.y - D.sy;
     if (!D.el) {
       if (Math.hypot(mx, my) < DRAG_START_PX) return;
       beginDrag();
     }
-    const z = dropZone(e.clientX, e.clientY);
+    const z = dropZone(D.x, D.y);
     // 穴に近づくと、穴の大きさにふくらんで「入りそう」を見せる
-    const s = z ? z.w / D.rect.width : 1.06;
-    D.el.style.transform = tf(mx, my, D.piece.rot, s);
+    D.s = z ? z.w / D.rect.width : 1.06;
+    D.el.style.transform = tf(mx, my, D.piece.rot, D.s);
     markZone(z);
   }
 
   function onCardUp(e) {
     if (!D || e.pointerId !== D.pid) return;
+    if (D.twist) endTwist();
     const d = D;
     D = null;
     markZone(null);
-    if (!d.el) { onCardTap(d); return; }
+    if (!d.el) { if (!d.twisted) onCardTap(d); return; }
     const z = dropZone(e.clientX, e.clientY);
     if (z) dropOn(d, z); else returnHome(d);
   }
 
   function onCardCancel(e) {
     if (!D || e.pointerId !== D.pid) return;
+    if (D.twist) endTwist();
     const d = D;
     D = null;
     markZone(null);
