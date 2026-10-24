@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.2.0';
+  const APP_VERSION = '1.3.0';
   const ROUND_N = 8;            // 1回の問題数
   const CHECK_N = 8;            // くるくるチェックの問題数
   const FLY_MS = 650;
@@ -402,11 +402,35 @@
   let S = 220;          // ピースと穴の一辺（px）
   let K = 2;            // レベル4：1単位あたりの px
 
-  function computeSizes() {
+  // 画面の形：regular（iPad）、land（スマホ横向き：穴が左・ピースが右）、port（スマホ縦向き：穴が上・ピースが下）
+  function layoutMode() {
     const W = window.innerWidth, H = window.innerHeight;
-    S = Math.round(Math.max(130, Math.min(240, (H - 170) / 2.1, (W - 200) / 4.2)));
+    if (H < 500 && W > H) return 'land';
+    if (W < 600 && H >= W) return 'port';
+    return 'regular';
+  }
+  // ピースの一辺 S を、画面の形とピースの数 n から決める
+  function computeSizes(n = 3) {
+    const W = window.innerWidth, H = window.innerHeight;
+    const mode = layoutMode();
+    document.body.classList.toggle('compact', mode !== 'regular');
+    document.body.classList.toggle('land', mode === 'land');
+    document.body.classList.toggle('port', mode === 'port');
+    if (mode === 'land') {
+      const rows = n <= 2 ? n : 2;
+      S = Math.min(170, (H - 60 - (rows - 1) * 10) / rows - 16);
+      trayEl.style.gridTemplateColumns = `repeat(${Math.ceil(n / rows)}, auto)`;
+    } else if (mode === 'port') {
+      S = Math.min(170, (W - 24 - (n - 1) * 10) / n - 16);
+      trayEl.style.gridTemplateColumns = '';
+    } else {
+      S = Math.min(240, (H - 170) / 2.1, (W - 60 - (n - 1) * 28) / n - 26);
+      trayEl.style.gridTemplateColumns = '';
+    }
+    S = Math.round(Math.max(70, S));
     document.documentElement.style.setProperty('--S', `${S}px`);
   }
+  const nPieces = (p) => (p.type === 'choose' ? p.choices.length : (p.type === 'rotate' ? 1 : p.pieces.length));
 
   const INTRO = {
     1: ['intro1', 'おなじ かたちを あなまで はこんでね'],
@@ -449,6 +473,7 @@
     Q.p = p; Q.busy = false; Q.misses = 0; Q.selected = -1; Q.t0 = now();
     holeEl.className = 'hole';
     trayEl.innerHTML = '';
+    computeSizes(nPieces(p));
     renderProgress();
     updateHint();
     if (p.type === 'compose') renderCompose(p);
@@ -491,22 +516,31 @@
 
   // レベル1・2・3・5：穴が1つ
   function renderSingle(p) {
-    // 穴はピースより少し大きく描き、ピースは飛びながら穴の大きさまで大きくなる
-    const stageH = window.innerHeight - 64 - (S + 52) - 30;
-    const HS = Math.round(Math.max(S, Math.min(S * 1.35, stageH * 0.92)));
-    holeEl.innerHTML = `<svg viewBox="0 0 100 100" width="${HS}" height="${HS}" aria-label="あな">${shapeSVG(p.hole.key, { rot: p.hole.rot, mode: 'hole' })}</svg>`;
     holeEl.onpointerdown = null;
+    holeEl.innerHTML = '';
     if (p.type === 'rotate') makeCard(p.piece, S, 0, true);
     else p.choices.forEach((c, i) => makeCard(c, S, i, false));
+    // 穴はピースより大きく描き、ピースは運ぶと穴の大きさまでふくらむ。大きさは残った場所から決める
+    const st = $('#stage');
+    const grow = document.body.classList.contains('compact') ? 1.8 : 1.35;
+    const HS = Math.round(Math.max(S * 0.9, Math.min(S * grow, st.clientWidth * 0.9, st.clientHeight * 0.9)));
+    holeEl.innerHTML = `<svg viewBox="0 0 100 100" width="${HS}" height="${HS}" aria-label="あな">${shapeSVG(p.hole.key, { rot: p.hole.rot, mode: 'hole' })}</svg>`;
   }
 
   // レベル4：穴がいくつかのパーツでできている
   function renderCompose(p) {
     const bb = compBBox(p.comp);
     const pad = 4;
-    const stageH = window.innerHeight - 64 - (S + 52) - 30;
-    K = Math.min(S / 100, stageH / (bb.h + pad * 2), (window.innerWidth * 0.6) / (bb.w + pad * 2));
     p.bb = { x: bb.x - pad, y: bb.y - pad, w: bb.w + pad * 2, h: bb.h + pad * 2 };
+    holeEl.innerHTML = '';
+    p.pieces.forEach((pc, i) => { const c = makeCard(pc, S, i, true); if (pc.placed) c.classList.add('used'); });
+    // 穴の縮尺 K はトレイを並べたあとに残った場所から決める。スマホでは穴をピースより大きく描き、
+    // ピースは運ぶと穴の大きさまでふくらむ（iPad では穴とピースは同じ縮尺）
+    const st = $('#stage');
+    const grow = document.body.classList.contains('compact') ? 1.8 : 1;
+    K = Math.min((S / 100) * grow, (st.clientHeight * 0.9) / p.bb.h, (st.clientWidth * 0.9) / p.bb.w);
+    const pw = Math.min(S, 100 * K);
+    trayEl.querySelectorAll('.pwrap').forEach((w) => { w.style.width = `${pw}px`; w.style.height = `${pw}px`; });
     const parts = p.comp.parts.map((part, j) => {
       const f = p.filled[j];
       const body = f ? shapeSVG(part.s, { rot: part.r, color: f.color }) : shapeSVG(part.s, { rot: part.r, mode: 'hole' });
@@ -514,7 +548,6 @@
     }).join('');
     holeEl.innerHTML = `<svg viewBox="${p.bb.x} ${p.bb.y} ${p.bb.w} ${p.bb.h}" width="${p.bb.w * K}" height="${p.bb.h * K}" aria-label="あな">${parts}</svg>`;
     holeEl.onpointerdown = null;
-    p.pieces.forEach((pc, i) => { const c = makeCard(pc, 100 * K, i, true); if (pc.placed) c.classList.add('used'); });
   }
 
   function cardOf(idx) { return trayEl.querySelector(`.card[data-idx="${idx}"]`); }
@@ -716,7 +749,7 @@
     const r = svg.getBoundingClientRect();
     const p = Q.p;
     if (p.type !== 'compose') {
-      const m = r.width * 0.35;
+      const m = r.width * (document.body.classList.contains('compact') ? 0.45 : 0.35);
       if (x < r.left - m || x > r.right + m || y < r.top - m || y > r.bottom + m) return null;
       return Object.assign(holeTargetRect(null), { slot: null });
     }
@@ -938,8 +971,8 @@
   });
   $('#btn-quit').addEventListener('click', () => { Sound.fx('tap'); quitToTitle(); });
   window.addEventListener('resize', () => {
-    if (currentScreen !== 'game' || Q.busy || !Q.p) return;
-    computeSizes();
+    if (currentScreen !== 'game' || Q.busy || !Q.p || D) { computeSizes(); return; }
+    computeSizes(nPieces(Q.p));
     trayEl.innerHTML = '';
     if (Q.p.type === 'compose') renderCompose(Q.p); else renderSingle(Q.p);
   });
@@ -1148,6 +1181,7 @@
   }
 
   // ---------- 起動 ----------
+  computeSizes();
   show('title');
   if (!data.settings.guideSeen) $('#guide-overlay').hidden = false;
 })();

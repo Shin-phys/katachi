@@ -389,9 +389,7 @@ body.no-gear .gear { display: none; }
   animation: rotate-hint 2.2s ease-in-out infinite;
 }
 @keyframes rotate-hint { 0%, 30% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }
-@media (orientation: portrait) {
-  .rotate-overlay { display: flex; }
-}
+/* v1.3：縦向きにも対応したので「よこむきに してね」は出さない */
 
 @media (prefers-reduced-motion: reduce) {
   .pwrap, .card, .star { animation: none !important; transition: none !important; }
@@ -403,3 +401,38 @@ body.no-gear .gear { display: none; }
 .flyer.dragging { filter: drop-shadow(0 10px 14px rgba(43, 58, 85, 0.25)); }
 .hole.near svg path[stroke-dasharray], .hole.near svg rect { fill: #BCD0EE; }
 .slot.hover path { fill: #BCD0EE; }
+
+/* ---------- v1.3：スマホ（land＝横向き、port＝縦向き） ---------- */
+body.compact .topbar { height: 40px; gap: 12px; padding: 0 60px 0 16px; }
+body.compact .progress { gap: 5px; }
+body.compact .progress span { width: 12px; height: 12px; }
+body.compact .hint { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body.compact .hint:not(:empty)::before { font-size: 10px; }
+body.compact .gear { width: 44px; height: 44px; top: var(--safe-top); }
+body.compact .card { padding: 6px; border-width: 2px; border-radius: 16px; box-shadow: 0 4px 0 var(--card-line); }
+body.compact .card .rot-badge { width: 26px; height: 26px; top: 4px; left: 4px; }
+body.compact .card .rot-badge svg { width: 16px; height: 16px; }
+body.compact .tray { gap: 10px; padding: 6px 12px calc(14px + var(--safe-bottom)); min-height: calc(var(--S) + 30px); }
+body.land #screen-game.active { display: grid; grid-template-columns: 1fr auto; grid-template-rows: 40px minmax(0, 1fr); }
+body.land .topbar { grid-column: 1 / -1; }
+body.land .stage { min-width: 0; }
+body.land .tray { display: grid; align-content: center; justify-content: center; padding: 6px 16px 10px 6px; min-height: 0; }
+body.compact .end-card { padding: 18px 22px 22px; }
+body.compact .end-shapes { grid-template-columns: repeat(4, 54px); gap: 8px; margin-bottom: 16px; }
+body.compact .end-shapes svg { width: 54px; height: 54px; }
+body.compact .big-btn { font-size: 22px; padding: 0.5em 1.1em; }
+.big-btn { white-space: nowrap; }
+body.compact .end-buttons { gap: 14px; }
+body.compact #screen-check { gap: 12px; }
+body.compact .check-sample { width: 130px; height: 130px; border-radius: 18px; }
+body.compact .check-sample svg { width: 108px; height: 108px; }
+body.compact .check-choices { gap: 28px; }
+body.compact .check-choices .card .pwrap { width: 108px; height: 108px; }
+body.compact .check-msg { height: 36px; font-size: 26px; }
+body.compact .check-progress { top: 14px; left: 16px; }
+body.compact #screen-title { gap: 3vh; }
+body.compact .title-art svg { width: 54px; height: 54px; }
+@media (max-width: 700px) {
+  .pgrid { grid-template-columns: 1fr; }
+  .parent-inner { padding: 16px 14px 28px; }
+}
