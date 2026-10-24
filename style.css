@@ -396,3 +396,10 @@ body.no-gear .gear { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .pwrap, .card, .star { animation: none !important; transition: none !important; }
 }
+
+/* ---------- v1.1：ドラッグ ---------- */
+.card { touch-action: none; }
+.card.lifted .pwrap { opacity: 0.22; }
+.flyer.dragging { filter: drop-shadow(0 10px 14px rgba(43, 58, 85, 0.25)); }
+.hole.near svg path[stroke-dasharray], .hole.near svg rect { fill: #BCD0EE; }
+.slot.hover path { fill: #BCD0EE; }

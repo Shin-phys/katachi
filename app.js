@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.0.0';
+  const APP_VERSION = '1.1.0';
   const ROUND_N = 8;            // 1回の問題数
   const CHECK_N = 8;            // くるくるチェックの問題数
   const FLY_MS = 650;
@@ -289,6 +289,7 @@
         case 'tap': this.tone(520, 0.08, { type: 'triangle', vol: 0.12 }); break;
         case 'turn': this.tone(700, 0.1, { type: 'triangle', to: 980, vol: 0.1 }); break;
         case 'fly': this.tone(420, 0.3, { to: 840, vol: 0.08 }); break;
+        case 'lift': this.tone(560, 0.08, { type: 'triangle', to: 700, vol: 0.08 }); break;
         case 'fit': this.tone(660, 0.12, { vol: 0.15 }); this.tone(990, 0.22, { vol: 0.13, delay: 0.1 }); break;
         case 'miss': this.tone(260, 0.2, { type: 'triangle', to: 210, vol: 0.08 }); break;
         case 'end': [784, 659, 784, 1047, 1319].forEach((f, i) => this.tone(f, 0.22, { type: 'triangle', vol: 0.13, delay: i * 0.11 })); break;
@@ -408,11 +409,11 @@
   }
 
   const INTRO = {
-    1: ['intro1', 'おなじ かたちは どれかな？'],
-    2: ['intro1', 'おなじ かたちは どれかな？'],
-    3: ['intro3', 'ピースを タップすると まわるよ。ぴったりの むきに なったら、あなを タップしてね'],
-    4: ['intro4', 'ピースを タップして まわそう。ぴったりの ばしょを タップして、かたちを つくろう'],
-    5: ['intro5', 'あたまの なかで まわしてね。どれが はいるかな？'],
+    1: ['intro1', 'おなじ かたちを あなまで はこんでね'],
+    2: ['intro1', 'おなじ かたちを あなまで はこんでね'],
+    3: ['intro3', 'ピースを タップすると まわるよ。むきが あったら、あなまで はこんでね'],
+    4: ['intro4', 'ピースを タップして まわそう。あう ばしょまで はこんで、かたちを つくろう'],
+    5: ['intro5', 'あたまの なかで まわしてね。はいる ピースを あなまで はこんでね'],
   };
   const HINTS = ['かどは いくつ？', 'とがっているのは どこ？', 'まわすと どうなる？', 'ひっくりかえすと どうなる？',
     'どっちが ながい？', 'おなじ ところは どこ？', 'どうして そう おもう？'];
@@ -481,6 +482,9 @@
       b.appendChild(badge);
     }
     b.addEventListener('pointerdown', onCardDown);
+    b.addEventListener('pointermove', onCardMove);
+    b.addEventListener('pointerup', onCardUp);
+    b.addEventListener('pointercancel', onCardCancel);
     trayEl.appendChild(b);
     return b;
   }
@@ -491,7 +495,7 @@
     const stageH = window.innerHeight - 64 - (S + 52) - 30;
     const HS = Math.round(Math.max(S, Math.min(S * 1.35, stageH * 0.92)));
     holeEl.innerHTML = `<svg viewBox="0 0 100 100" width="${HS}" height="${HS}" aria-label="あな">${shapeSVG(p.hole.key, { rot: p.hole.rot, mode: 'hole' })}</svg>`;
-    holeEl.onpointerdown = p.type === 'rotate' ? onHoleDown : null;
+    holeEl.onpointerdown = null;
     if (p.type === 'rotate') makeCard(p.piece, S, 0, true);
     else p.choices.forEach((c, i) => makeCard(c, S, i, false));
   }
@@ -509,7 +513,7 @@
       return `<g class="slot" data-slot="${j}" transform="translate(${part.x} ${part.y})">${body}</g>`;
     }).join('');
     holeEl.innerHTML = `<svg viewBox="${p.bb.x} ${p.bb.y} ${p.bb.w} ${p.bb.h}" width="${p.bb.w * K}" height="${p.bb.h * K}" aria-label="あな">${parts}</svg>`;
-    holeEl.onpointerdown = onHoleDown;
+    holeEl.onpointerdown = null;
     p.pieces.forEach((pc, i) => { const c = makeCard(pc, 100 * K, i, true); if (pc.placed) c.classList.add('used'); });
   }
 
@@ -524,43 +528,18 @@
     return { cx: left + 50 * K, cy: topY + 50 * K, w: 100 * K };
   }
 
-  // ピースの複製を穴まで飛ばす。r0 → r1 に回りながら。
-  function fly(card, r0, r1, target) {
-    const pw = card.querySelector('.pwrap');
-    const rect = pw.getBoundingClientRect();
-    const el = document.createElement('div');
-    el.className = 'flyer';
-    el.innerHTML = pw.innerHTML;
-    Object.assign(el.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` });
-    el.style.transform = `rotate(${r0}deg)`;
-    $('#fly-layer').appendChild(el);
-    const dx = target.cx - (rect.left + rect.width / 2), dy = target.cy - (rect.top + rect.height / 2);
-    const s = target.w / rect.width;
-    const from = `translate(0px, 0px) rotate(${r0}deg) scale(1)`;
-    const to = `translate(${dx}px, ${dy}px) rotate(${r1}deg) scale(${s})`;
-    Sound.fx('fly');
+  // ---------- ピースの動き ----------
+  const tf = (dx, dy, r, s) => `translate(${dx}px, ${dy}px) rotate(${r}deg) scale(${s})`;
+  const shortest = (a, b) => mod(b - a + 180, 360) - 180;
+
+  function animateEl(el, from, to, ms) {
     if (el.animate) {
-      const a = el.animate([{ transform: from }, { transform: to }], { duration: FLY_MS, easing: 'cubic-bezier(.3,.7,.4,1)', fill: 'forwards' });
-      return a.finished.then(() => ({ el, from, to }));
+      const a = el.animate([{ transform: from }, { transform: to }], { duration: ms, easing: 'cubic-bezier(.3,.7,.4,1)', fill: 'forwards' });
+      return a.finished.then(() => { el.style.transform = to; a.cancel(); });
     }
-    el.style.transition = `transform ${FLY_MS}ms`;
-    requestAnimationFrame(() => { el.style.transform = to; });
-    return new Promise((ok) => setTimeout(() => ok({ el, from, to }), FLY_MS));
+    el.style.transform = to;
+    return Promise.resolve();
   }
-  function flyBack(f) {
-    f.el.classList.add('ghost');
-    return new Promise((ok) => {
-      later(750, () => {
-        if (f.el.animate) {
-          f.el.animate([{ transform: f.to }, { transform: f.from }], { duration: 450, easing: 'ease-in-out', fill: 'forwards' })
-            .finished.then(() => { f.el.remove(); ok(); });
-        } else {
-          f.el.remove(); ok();
-        }
-      });
-    });
-  }
-  const shortest = (a, b) => { const d = mod(b - a + 180, 360) - 180; return d; };
 
   function burstAt(cx, cy, size) {
     for (let n = 0; n < 12; n++) {
@@ -588,113 +567,194 @@
     }
   }
 
+  function pieceOf(idx) {
+    const p = Q.p;
+    if (!p) return null;
+    if (p.type === 'choose') return p.choices[idx];
+    if (p.type === 'rotate') return p.piece;
+    return p.pieces[idx];
+  }
+
+  // ---------- ドラッグ ----------
+  // 指で8px以上動かすとドラッグ。動かさずに離すとタップ（レベル3・4は回す）。
+  const DRAG_START_PX = 8;
+  let D = null;
+
   function onCardDown(e) {
     e.preventDefault();
-    if (Q.busy || currentScreen !== 'game') return;
+    if (Q.busy || currentScreen !== 'game' || D) return;
     const card = e.currentTarget;
     const idx = Number(card.dataset.idx);
+    const piece = pieceOf(idx);
+    if (!piece || piece.placed) return;
+    try { card.setPointerCapture(e.pointerId); } catch (err) { /* 未対応の端末 */ }
+    const rect = card.querySelector('.pwrap').getBoundingClientRect();
+    D = { card, idx, piece, pid: e.pointerId, sx: e.clientX, sy: e.clientY, rect, el: null };
+  }
+
+  function beginDrag() {
+    const pw = D.card.querySelector('.pwrap');
+    const el = document.createElement('div');
+    el.className = 'flyer dragging';
+    el.innerHTML = pw.innerHTML;
+    const r = D.rect;
+    Object.assign(el.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+    el.style.transform = tf(0, 0, D.piece.rot, 1);
+    $('#fly-layer').appendChild(el);
+    D.el = el;
+    D.card.classList.add('lifted');
+    Sound.fx('lift');
+  }
+
+  function onCardMove(e) {
+    if (!D || e.pointerId !== D.pid) return;
+    const mx = e.clientX - D.sx, my = e.clientY - D.sy;
+    if (!D.el) {
+      if (Math.hypot(mx, my) < DRAG_START_PX) return;
+      beginDrag();
+    }
+    const z = dropZone(e.clientX, e.clientY);
+    // 穴に近づくと、穴の大きさにふくらんで「入りそう」を見せる
+    const s = z ? z.w / D.rect.width : 1.06;
+    D.el.style.transform = tf(mx, my, D.piece.rot, s);
+    markZone(z);
+  }
+
+  function onCardUp(e) {
+    if (!D || e.pointerId !== D.pid) return;
+    const d = D;
+    D = null;
+    markZone(null);
+    if (!d.el) { onCardTap(d); return; }
+    const z = dropZone(e.clientX, e.clientY);
+    if (z) dropOn(d, z); else returnHome(d);
+  }
+
+  function onCardCancel(e) {
+    if (!D || e.pointerId !== D.pid) return;
+    const d = D;
+    D = null;
+    markZone(null);
+    if (d.el) returnHome(d);
+  }
+
+  // 指の位置が穴（レベル4はどのパーツ）の上か。少し外れていても入る扱いにする。
+  function dropZone(x, y) {
+    const svg = holeEl.querySelector('svg');
+    if (!svg) return null;
+    const r = svg.getBoundingClientRect();
     const p = Q.p;
-    if (p.type === 'choose') { tryChoice(card, idx); return; }
-    // 回す（レベル3・4）
-    const piece = p.type === 'rotate' ? p.piece : p.pieces[idx];
-    if (piece.placed) return;
-    piece.rot += 90;
-    card.querySelector('.pwrap').style.transform = `rotate(${piece.rot}deg)`;
-    Sound.fx('turn');
-    if (p.type === 'compose') selectPiece(idx);
-  }
-
-  function selectPiece(idx) {
-    Q.selected = idx;
-    trayEl.querySelectorAll('.card').forEach((c) => c.classList.toggle('glow', Number(c.dataset.idx) === idx));
-  }
-
-  // レベル1・2・5：選ぶ
-  function tryChoice(card, idx) {
-    const p = Q.p, c = p.choices[idx];
-    Q.busy = true;
-    trayEl.querySelectorAll('.card').forEach((x) => x.classList.remove('glow'));
-    const r1 = c.rot + shortest(c.rot, p.hole.rot);
-    fly(card, c.rot, r1, holeTargetRect(null)).then((f) => {
-      if (c.correct) {
-        card.classList.add('used');
-        f.el.remove();
-        solvedSingle(c.color);
-      } else {
-        missFeedback(card);
-        flyBack(f).then(() => {
-          Q.busy = false;
-          if (Q.misses >= 2) {
-            const k = p.choices.findIndex((x) => x.correct);
-            cardOf(k).classList.add('glow');
-          }
-        });
-      }
-    });
-  }
-
-  // 穴をタップ（レベル3・4）
-  function onHoleDown(e) {
-    e.preventDefault();
-    if (Q.busy || currentScreen !== 'game') return;
-    const p = Q.p;
-    if (p.type === 'rotate') {
-      const card = cardOf(0), pc = p.piece;
-      Q.busy = true;
-      fly(card, pc.rot, pc.rot, holeTargetRect(null)).then((f) => {
-        if (sameOrient(pc.key, pc.rot, p.hole.rot)) {
-          card.classList.add('used');
-          f.el.remove();
-          solvedSingle(pc.color);
-        } else {
-          missFeedback(card);
-          flyBack(f).then(() => {
-            Q.busy = false;
-            if (Q.misses >= 2) helpRotate(card, pc, p.hole.rot, null);
-            else { holeEl.classList.remove('blink'); void holeEl.offsetWidth; holeEl.classList.add('blink'); Sound.say('yokumite', 'あなの かたちを よく みてね'); }
-          });
-        }
+    if (p.type !== 'compose') {
+      const m = r.width * 0.35;
+      if (x < r.left - m || x > r.right + m || y < r.top - m || y > r.bottom + m) return null;
+      return Object.assign(holeTargetRect(null), { slot: null });
+    }
+    const m = 25 * K;
+    if (x < r.left - m || x > r.right + m || y < r.top - m || y > r.bottom + m) return null;
+    let slot = -1;
+    const hit = document.elementFromPoint(x, y);
+    const g = hit && hit.closest ? hit.closest('.slot') : null;
+    if (g && !p.filled[Number(g.dataset.slot)]) slot = Number(g.dataset.slot);
+    if (slot < 0) {
+      let best = Infinity;
+      p.comp.parts.forEach((part, j) => {
+        if (p.filled[j]) return;
+        const t = holeTargetRect(j);
+        const dd = Math.hypot(t.cx - x, t.cy - y);
+        if (dd < best) { best = dd; slot = j; }
       });
-      return;
     }
-    if (p.type !== 'compose') return;
-    const g = e.target.closest ? e.target.closest('.slot') : null;
-    if (!g) return;
-    const slot = Number(g.dataset.slot);
-    if (p.filled[slot]) return;
-    if (Q.selected < 0) {
-      Sound.say('erande', 'さきに ピースを タップしてね');
-      trayEl.querySelectorAll('.card:not(.used)').forEach((c) => { c.classList.remove('nudge'); void c.offsetWidth; c.classList.add('nudge'); });
-      return;
-    }
-    const idx = Q.selected, pc = p.pieces[idx], card = cardOf(idx), part = p.comp.parts[slot];
+    if (slot < 0) return null;
+    return Object.assign(holeTargetRect(slot), { slot });
+  }
+
+  function markZone(z) {
+    holeEl.classList.toggle('near', !!z && Q.p.type !== 'compose');
+    holeEl.querySelectorAll('.slot').forEach((g) => g.classList.toggle('hover', !!z && Number(g.dataset.slot) === z.slot));
+  }
+
+  function returnHome(d) {
     Q.busy = true;
-    card.classList.remove('glow');
-    fly(card, pc.rot, pc.rot, holeTargetRect(slot)).then((f) => {
-      if (pc.key === part.s && sameOrient(pc.key, pc.rot, part.r)) {
-        f.el.remove();
-        pc.placed = true;
-        card.classList.add('used');
-        p.filled[slot] = { color: pc.color };
-        Q.selected = -1;
-        Q.misses = 0;
-        renderComposeHole(p);
-        Sound.fx('fit');
-        if (p.filled.every(Boolean)) solvedCompose();
-        else { Q.busy = false; }
-      } else {
-        missFeedback(card);
-        flyBack(f).then(() => {
-          Q.busy = false;
-          selectPiece(idx);
-          if (Q.misses >= 2) {
-            // 手助け：選んでいるピースが入る場所を光らせ、正しい向きまで回して見せる
-            const j = p.comp.parts.findIndex((q, n) => !p.filled[n] && q.s === pc.key);
-            if (j >= 0) helpRotate(card, pc, p.comp.parts[j].r, j);
-          }
-        });
-      }
+    animateEl(d.el, d.el.style.transform, tf(0, 0, d.piece.rot, 1), 350).then(() => {
+      d.el.remove();
+      d.card.classList.remove('lifted');
+      Q.busy = false;
     });
+  }
+
+  function onCardTap(d) {
+    const p = Q.p;
+    if (p.type === 'choose') {
+      // 選ぶレベルでは、タップではなく運んで入れる
+      d.card.classList.remove('nudge');
+      void d.card.offsetWidth;
+      d.card.classList.add('nudge');
+      Sound.say('hakonde', 'ゆびで あなまで はこんでね');
+      return;
+    }
+    d.piece.rot += 90;
+    d.card.querySelector('.pwrap').style.transform = `rotate(${d.piece.rot}deg)`;
+    Sound.fx('turn');
+  }
+
+  function dropOn(d, z) {
+    Q.busy = true;
+    const p = Q.p, pc = d.piece;
+    let r1 = pc.rot, ok;
+    if (p.type === 'choose') {
+      // レベル1・2・5：選んだピースは穴の向きまで回りながら入る
+      r1 = pc.rot + shortest(pc.rot, p.hole.rot);
+      ok = !!pc.correct;
+    } else if (p.type === 'rotate') {
+      ok = sameOrient(pc.key, pc.rot, p.hole.rot);
+    } else {
+      const part = p.comp.parts[z.slot];
+      ok = pc.key === part.s && sameOrient(pc.key, pc.rot, part.r);
+    }
+    const r = d.rect;
+    const to = tf(z.cx - (r.left + r.width / 2), z.cy - (r.top + r.height / 2), r1, z.w / r.width);
+    Sound.fx('fly');
+    animateEl(d.el, d.el.style.transform, to, 380).then(() => {
+      if (ok) {
+        d.el.remove();
+        d.card.classList.remove('lifted');
+        d.card.classList.add('used');
+        if (p.type === 'compose') {
+          pc.placed = true;
+          p.filled[z.slot] = { color: pc.color };
+          Q.misses = 0;
+          renderComposeHole(p);
+          Sound.fx('fit');
+          if (p.filled.every(Boolean)) solvedCompose();
+          else Q.busy = false;
+        } else {
+          solvedSingle(pc.color);
+        }
+        return;
+      }
+      // 合わない：重なった様子を見せてからトレイに戻る（×や減点はなし）
+      missFeedback(d.card);
+      d.el.classList.add('ghost');
+      later(750, () => animateEl(d.el, to, tf(0, 0, pc.rot, 1), 450).then(() => {
+        d.el.remove();
+        d.card.classList.remove('lifted');
+        Q.busy = false;
+        afterMiss(d);
+      }));
+    });
+  }
+
+  function afterMiss(d) {
+    const p = Q.p;
+    if (p.type === 'choose') {
+      if (Q.misses >= 2) cardOf(p.choices.findIndex((x) => x.correct)).classList.add('glow');
+    } else if (p.type === 'rotate') {
+      if (Q.misses >= 2) helpRotate(d.card, p.piece, p.hole.rot, null);
+      else { holeEl.classList.remove('blink'); void holeEl.offsetWidth; holeEl.classList.add('blink'); Sound.say('yokumite', 'あなの かたちを よく みてね'); }
+    } else if (Q.misses >= 2) {
+      const j = p.comp.parts.findIndex((q, n) => !p.filled[n] && q.s === d.piece.key);
+      if (j >= 0) helpRotate(d.card, d.piece, p.comp.parts[j].r, j);
+    }
   }
 
   function renderComposeHole(p) {
@@ -703,10 +763,11 @@
       const g = svg.querySelector(`.slot[data-slot="${j}"]`);
       const f = p.filled[j];
       g.innerHTML = f ? shapeSVG(part.s, { rot: part.r, color: f.color }) : shapeSVG(part.s, { rot: part.r, mode: 'hole' });
-      g.classList.remove('glow-slot');
+      g.classList.remove('hover');
     });
   }
 
+  // 2回まちがえたときの手助け：正しい向きまで回して見せ、入れる場所を点滅させる
   function helpRotate(card, pc, targetRot, slot) {
     let steps = 0;
     while (!sameOrient(pc.key, pc.rot, targetRot) && steps < 4) {
@@ -714,6 +775,7 @@
       steps += 1;
     }
     card.querySelector('.pwrap').style.transform = `rotate(${pc.rot}deg)`;
+    card.classList.add('glow');
     if (steps) Sound.fx('turn');
     later(500, () => {
       if (slot == null) {
@@ -722,7 +784,7 @@
         const g = holeEl.querySelector(`.slot[data-slot="${slot}"]`);
         if (g) { g.style.animation = 'none'; void g.getBoundingClientRect(); g.style.animation = 'blink 0.5s ease-in-out 3'; }
       }
-      Sound.say('koko', 'ここに いれてみよう');
+      Sound.say('koko', 'ここまで はこんでみよう');
     });
   }
 
@@ -788,6 +850,7 @@
     Q.busy = false;
     $('#end-overlay').hidden = true;
     $('#fly-layer').innerHTML = '';
+    D = null;
     show('title');
   }
 
@@ -808,7 +871,6 @@
     computeSizes();
     trayEl.innerHTML = '';
     if (Q.p.type === 'compose') renderCompose(Q.p); else renderSingle(Q.p);
-    if (Q.selected >= 0) selectPiece(Q.selected);
   });
 
   // ---------- 保護者ゲート ----------
@@ -830,6 +892,7 @@
     Q.busy = false;
     $('#end-overlay').hidden = true;
     $('#fly-layer').innerHTML = '';
+    D = null;
     if ('speechSynthesis' in window) speechSynthesis.cancel();
     renderParent();
     show('parent');
