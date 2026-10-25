@@ -5,8 +5,9 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.3.0';
-  const ROUND_N = 8;            // 1回の問題数
+  const APP_VERSION = '1.4.0';
+  const roundN = (lv) => (lv >= 4 ? 10 : 8);   // 1回の問題数（レベル4〜6はストックから10問）
+  const MAX_LEVEL = 6;
   const CHECK_N = 8;            // くるくるチェックの問題数
   const FLY_MS = 650;
 
@@ -76,7 +77,65 @@
     L5: [[0, 0], [0, 1], [0, 2], [0, 3], [1, 3]],
   };
   // 念のため、裏返しが回転で元に戻らない（キラルな）形だけを使う
+  // レベル6の難しい問題用：正方形6個の形（裏返すと別の形になり、4×4に収まるものだけ使う）
+  const HEX = {
+    H1: [[0, 0], [1, 0], [2, 0], [2, 1], [3, 1], [3, 2]],
+    H2: [[0, 0], [1, 0], [1, 1], [1, 2], [2, 2], [1, 3]],
+    H3: [[0, 0], [1, 0], [1, 1], [2, 1], [1, 2], [1, 3]],
+    H4: [[0, 0], [0, 1], [1, 1], [2, 1], [2, 2], [3, 2]],
+    H5: [[1, 0], [0, 1], [1, 1], [2, 1], [2, 2], [2, 3]],
+    H6: [[0, 0], [1, 0], [2, 0], [0, 1], [0, 2], [1, 2]],
+    H7: [[0, 0], [0, 1], [0, 2], [1, 2], [2, 2], [2, 3]],
+    H8: [[1, 0], [1, 1], [0, 1], [1, 2], [2, 2], [2, 3]],
+  };
+  Object.entries(HEX).forEach(([k, c]) => { if (isChiral(c) && fits4(c)) POLY[k] = c; });
   const POLY_KEYS = Object.keys(POLY).filter((k) => isChiral(POLY[k]));
+  const POLY_EASY = ['L4', 'S4', 'P5', 'F5', 'N5', 'Y5', 'L5'].filter((k) => POLY_KEYS.includes(k));
+  const POLY_HARD = POLY_KEYS.filter((k) => POLY[k].length >= 5);
+  function fits4(cells) {
+    return Math.max(...cells.map((c) => c[0])) - Math.min(...cells.map((c) => c[0])) < 4
+      && Math.max(...cells.map((c) => c[1])) - Math.min(...cells.map((c) => c[1])) < 4;
+  }
+  function normCells(cells) {
+    const mx = Math.min(...cells.map((c) => c[0])), my = Math.min(...cells.map((c) => c[1]));
+    return cells.map(([x, y]) => [x - mx, y - my]);
+  }
+  function connectedCells(cells) {
+    const key = (c) => `${c[0]},${c[1]}`;
+    const set = new Set(cells.map(key));
+    const seen = new Set([key(cells[0])]);
+    const stack = [cells[0]];
+    while (stack.length) {
+      const [x, y] = stack.pop();
+      [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dx, dy]) => {
+        const k = `${x + dx},${y + dy}`;
+        if (set.has(k) && !seen.has(k)) { seen.add(k); stack.push([x + dx, y + dy]); }
+      });
+    }
+    return seen.size === cells.length;
+  }
+  // 「1マスだけ動かした、よく似た別の形」をつくる（回しても裏返しても元の形にならないもの）
+  let nearSeq = 0;
+  function nearShapeKey(baseKey) {
+    const cells = POLY[baseKey];
+    const forms = new Set();
+    [cells, cells.map(([x, y]) => [-x, y])].forEach((c) => [0, 1, 2, 3].forEach((t) => forms.add(canon(rotCells(c, t)))));
+    const cands = [];
+    cells.forEach((_, i) => {
+      const rest = cells.filter((__, j) => j !== i);
+      rest.forEach(([x, y]) => [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dx, dy]) => {
+        const nx = x + dx, ny = y + dy;
+        if (cells.some(([a, b2]) => a === nx && b2 === ny)) return;
+        const nc = normCells(rest.concat([[nx, ny]]));
+        if (!connectedCells(nc) || !fits4(nc) || forms.has(canon(nc)) || !isChiral(nc)) return;
+        cands.push(nc);
+      }));
+    });
+    if (!cands.length) return null;
+    const k = `near${nearSeq++}`;
+    POLY[k] = pick(cands);
+    return k;
+  }
   function canon(cells) {
     const mx = Math.min(...cells.map((c) => c[0])), my = Math.min(...cells.map((c) => c[1]));
     return cells.map((c) => `${c[0] - mx},${c[1] - my}`).sort().join(';');
@@ -106,7 +165,8 @@
   function shapeSVG(key, opt = {}) {
     const rot = opt.rot || 0;
     const mir = opt.mirror ? ' translate(100 0) scale(-1 1)' : '';
-    const hole = opt.mode === 'hole';
+    const sil = opt.mode === 'sil';                 // 点線なしの穴（レベル5）
+    const hole = opt.mode === 'hole' || sil;
     const [fill, line] = hole ? [HOLE_FILL, HOLE_LINE] : (opt.color || COLORS[0]);
     let inner = '';
     if (key.startsWith('poly:')) {
@@ -116,14 +176,16 @@
       inner = cells.map(([x, y]) => {
         const rx = ox + x * u, ry = oy + y * u;
         return hole
-          ? `<rect x="${rx - 0.4}" y="${ry - 0.4}" width="${u + 0.8}" height="${u + 0.8}" fill="${fill}"/>`
+          ? `<rect class="holefill" x="${rx - 0.4}" y="${ry - 0.4}" width="${u + 0.8}" height="${u + 0.8}" fill="${fill}"/>`
           : `<rect x="${rx}" y="${ry}" width="${u}" height="${u}" rx="2" fill="${fill}" stroke="#fff" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`;
       }).join('');
       if (!hole) inner = `<g>${inner}</g>`;
     } else {
       const d = SHAPES[key].d;
-      inner = hole
-        ? `<path d="${d}" fill="${fill}" stroke="${line}" stroke-width="2.5" stroke-dasharray="7 6" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`
+      inner = sil
+        ? `<path class="holefill" d="${d}" fill="${fill}" stroke="${fill}" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`
+        : hole
+        ? `<path class="holefill" d="${d}" fill="${fill}" stroke="${line}" stroke-width="2.5" stroke-dasharray="7 6" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`
         : `<path d="${d}" fill="${fill}" stroke="${line}" stroke-width="3" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
     }
     return `<g transform="rotate(${rot} 50 50)${mir}">${inner}</g>`;
@@ -132,14 +194,26 @@
 
   // ---------- 組み合わせ（レベル4） ----------
   // 各パーツ：形 s を r 度回し、枠の左上を (x, y) に置く（枠は100×100）
+  const P_ = (s, r, x, y) => ({ s, r, x, y });
   const COMPS = [
-    { name: 'しかく', parts: [{ s: 'c_rt', r: 0, x: 0, y: 0 }, { s: 'c_rt', r: 180, x: 0, y: 0 }] },
-    { name: 'いえ', parts: [{ s: 'c_iso', r: 0, x: 0, y: -25 }, { s: 'c_sq', r: 0, x: 0, y: 50 }] },
-    { name: 'おおきな さんかく', parts: [{ s: 'c_rt', r: 270, x: 0, y: 0 }, { s: 'c_rt', r: 0, x: 100, y: 0 }] },
-    { name: 'き', parts: [{ s: 'c_iso', r: 0, x: 0, y: -25 }, { s: 'c_rect', r: 90, x: 0, y: 50 }] },
-    { name: 'やじるし', parts: [{ s: 'c_rect', r: 0, x: 0, y: 0 }, { s: 'c_iso', r: 90, x: 75, y: 0 }] },
-    { name: 'ふね', parts: [{ s: 'c_rt', r: 0, x: 0, y: -25 }, { s: 'c_trap', r: 180, x: 0, y: 50 }] },
-    { name: 'ロケット', parts: [{ s: 'c_iso', r: 0, x: 0, y: -25 }, { s: 'c_sq', r: 0, x: 0, y: 50 }, { s: 'c_rect', r: 0, x: 0, y: 125 }] },
+    { name: 'しかく', parts: [P_('c_rt', 0, 0, 0), P_('c_rt', 180, 0, 0)] },
+    { name: 'いえ', parts: [P_('c_iso', 0, 0, -25), P_('c_sq', 0, 0, 50)] },
+    { name: 'おおきな さんかく', parts: [P_('c_rt', 270, 0, 0), P_('c_rt', 0, 100, 0)] },
+    { name: 'き', parts: [P_('c_iso', 0, 0, -25), P_('c_rect', 90, 0, 50)] },
+    { name: 'やじるし', parts: [P_('c_rect', 0, 0, 0), P_('c_iso', 90, 75, 0)] },
+    { name: 'ふね', parts: [P_('c_rt', 0, 0, -25), P_('c_trap', 180, 0, 50)] },
+    { name: 'ロケット', parts: [P_('c_iso', 0, 0, -25), P_('c_sq', 0, 0, 50), P_('c_rect', 0, 0, 125)] },
+    { name: 'さかな', parts: [P_('c_sq', 0, 0, 0), P_('c_iso', 270, 75, 0)] },
+    { name: 'リボン', parts: [P_('c_iso', 90, 0, 0), P_('c_iso', 270, 50, 0)] },
+    { name: 'すべりだい', parts: [P_('c_sq', 0, 0, 0), P_('c_rt', 0, 100, 0)] },
+    { name: 'きのこ', parts: [P_('c_trap', 0, 0, -25), P_('c_rect', 90, 0, 50)] },
+    { name: 'おおきな いえ', parts: [P_('c_rt', 270, 0, -100), P_('c_rt', 0, 100, -100), P_('c_sq', 0, 0, 0), P_('c_sq', 0, 100, 0)] },
+    { name: 'ダイヤ', parts: [P_('c_iso', 0, 0, 0), P_('c_iso', 180, 0, 50)] },
+    { name: 'ながしかく', parts: [P_('c_rt', 0, 0, 0), P_('c_rt', 180, 0, 0), P_('c_rt', 0, 100, 0), P_('c_rt', 180, 100, 0)] },
+    { name: 'おみせ', parts: [P_('c_trap', 0, 0, -25), P_('c_sq', 0, 0, 50)] },
+    { name: 'さか', parts: [P_('c_rt', 0, 0, 0), P_('c_sq', 0, 0, 100), P_('c_rt', 0, 100, 100)] },
+    { name: 'つみき', parts: [P_('c_sq', 0, 0, 0), P_('c_sq', 0, 100, 0), P_('c_sq', 0, 50, -100)] },
+    { name: 'かさ', parts: [P_('c_rt', 270, 0, 0), P_('c_rt', 0, 100, 0), P_('c_rect', 90, 50, 100)] },
   ];
   function rotPt([x, y], r) {
     switch (mod(r, 360)) {
@@ -184,6 +258,13 @@
     }
   }
   let data = loadData();
+  // v1.4：レベル5（頭の中で回す）をレベル6に移し、新しいレベル5（点線なし）を入れた
+  if (!data.settings.levelsV2) {
+    if (Number(data.settings.level) === 5) data.settings.level = 6;
+    data.rounds.forEach((r) => { if (r.level === 5) r.level = 6; });
+    data.settings.levelsV2 = true;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) { /* 保存できなくても遊べる */ }
+  }
   function saveData() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) { /* 保存できなくても遊べる */ }
   }
@@ -361,29 +442,57 @@
         piece: { key: t, rot: hr + pick([90, 180, 270]), color: pick(COLORS) },
       };
     }
-    if (level === 4) {
-      const comp = pick(COMPS.filter((c) => c.name !== prevKey));
-      const cs = colorsFor(comp.parts.length);
-      const pieces = comp.parts.map((part, i) => {
-        const bad = ROTS.filter((r) => !comp.parts.some((q) => q.s === part.s && sameOrient(part.s, r, q.r)));
-        return { key: part.s, rot: pick(bad.length ? bad : ROTS), color: cs[i], placed: false };
-      });
-      return { type: 'compose', key: comp.name, comp, pieces: shuffle(pieces), filled: comp.parts.map(() => null) };
-    }
-    // level 5
-    const pk = pick(POLY_KEYS.filter((k) => `poly:${k}` !== prevKey));
+    return null;
+  }
+
+  // レベル4・5：組み立て。レベル5は穴の中の点線（ガイド）なし
+  function makeCompose(comp, noGuide) {
+    const cs = colorsFor(comp.parts.length);
+    const pieces = comp.parts.map((part, i) => {
+      const bad = ROTS.filter((r) => !comp.parts.some((q) => q.s === part.s && sameOrient(part.s, r, q.r)));
+      return { key: part.s, rot: pick(bad.length ? bad : ROTS), color: cs[i % cs.length], placed: false };
+    });
+    return { type: 'compose', key: comp.name, comp, noGuide, pieces: shuffle(pieces), filled: comp.parts.map(() => null) };
+  }
+
+  // レベル6：頭の中で回す。hard = 4択（裏返し2つ＋1マスだけ違う形）
+  function makeMental(pk, hard) {
     const key = `poly:${pk}`;
     const hr = pick(ROTS);
     const mirRots = shuffle(ROTS).slice(0, 2);
-    const cs = colorsFor(3);
-    return {
-      type: 'choose', key, hole: { key, rot: hr },
-      choices: shuffle([
-        { key, rot: hr + pick([90, 180, 270]), correct: true, color: cs[0] },
-        { key, rot: mirRots[0], mirror: true, color: cs[1] },
-        { key, rot: mirRots[1], mirror: true, color: cs[2] },
-      ]),
-    };
+    const cs = colorsFor(4);
+    const choices = [
+      { key, rot: hr + pick([90, 180, 270]), correct: true, color: cs[0] },
+      { key, rot: mirRots[0], mirror: true, color: cs[1] },
+      { key, rot: mirRots[1], mirror: true, color: cs[2] },
+    ];
+    if (hard) {
+      const nk = nearShapeKey(pk);
+      if (nk) choices.push({ key: `poly:${nk}`, rot: pick(ROTS), mirror: Math.random() < 0.5, color: cs[3] });
+    }
+    return { type: 'choose', key, hard, hole: { key, rot: hr }, choices: shuffle(choices) };
+  }
+
+  // 1回分の問題をつくる。レベル4〜6はストックから重ならないように選ぶ
+  function makeRound(level) {
+    const n = roundN(level);
+    if (level === 4 || level === 5) {
+      return shuffle(COMPS).slice(0, n).map((c) => makeCompose(c, level === 5));
+    }
+    if (level === 6) {
+      // 前半4問はふつう（3択）、後半6問はむずかしい（大きな形・まぎらわしい形の4択）
+      const hard = shuffle(POLY_HARD).slice(0, 6);
+      const easy = shuffle(POLY_EASY.filter((k) => !hard.includes(k)).concat(POLY_EASY)).filter((k, i, a) => a.indexOf(k) === i).slice(0, 4);
+      return easy.map((k) => makeMental(k, false)).concat(hard.map((k) => makeMental(k, true)));
+    }
+    const list = [];
+    let prev = '';
+    for (let i = 0; i < n; i++) {
+      const p = makePuzzle(level, prev);
+      list.push(p);
+      prev = p.key;
+    }
+    return list;
   }
 
   // ---------- ゲーム ----------
@@ -437,7 +546,8 @@
     2: ['intro1', 'おなじ かたちを あなまで はこんでね'],
     3: ['intro3', 'ピースは タップするか、ゆび 2ほんで ひねると まわるよ。むきが あったら、あなまで はこんでね'],
     4: ['intro4', 'ピースを タップして まわそう。あう ばしょまで はこんで、かたちを つくろう'],
-    5: ['intro5', 'あたまの なかで まわしてね。はいる ピースを あなまで はこんでね'],
+    5: ['intro5b', 'てんせんが ないよ。どこに はいるか さがして、はこんでね'],
+    6: ['intro5', 'あたまの なかで まわしてね。はいる ピースを あなまで はこんでね'],
   };
   const HINTS = ['かどは いくつ？', 'とがっているのは どこ？', 'まわすと どうなる？', 'ひっくりかえすと どうなる？',
     'どっちが ながい？', 'おなじ ところは どこ？', 'どうして そう おもう？'];
@@ -445,14 +555,10 @@
   function newRound() {
     clearTimers();
     computeSizes();
-    Q.level = [1, 2, 3, 4, 5].includes(Number(data.settings.level)) ? Number(data.settings.level) : 1;
-    Q.list = [];
-    let prev = '';
-    for (let n = 0; n < ROUND_N; n++) {
-      const p = makePuzzle(Q.level, prev);
-      Q.list.push(p);
-      prev = p.key;
-    }
+    const lv = Number(data.settings.level);
+    Q.level = lv >= 1 && lv <= MAX_LEVEL ? lv : 1;
+    Q.list = makeRound(Q.level);
+    Q.n = Q.list.length;
     Q.i = 0; Q.mistakes = 0; Q.ms = 0; Q.done = []; Q.introSaid = 0;
     $('#end-overlay').hidden = true;
     show('game');
@@ -460,7 +566,7 @@
   }
 
   function renderProgress() {
-    $('#progress').innerHTML = Array.from({ length: ROUND_N }, (_, n) =>
+    $('#progress').innerHTML = Array.from({ length: Q.n }, (_, n) =>
       `<span class="${n < Q.i ? 'done' : (n === Q.i ? 'now' : '')}"></span>`).join('');
   }
 
@@ -543,7 +649,7 @@
     trayEl.querySelectorAll('.pwrap').forEach((w) => { w.style.width = `${pw}px`; w.style.height = `${pw}px`; });
     const parts = p.comp.parts.map((part, j) => {
       const f = p.filled[j];
-      const body = f ? shapeSVG(part.s, { rot: part.r, color: f.color }) : shapeSVG(part.s, { rot: part.r, mode: 'hole' });
+      const body = f ? shapeSVG(part.s, { rot: part.r, color: f.color }) : shapeSVG(part.s, { rot: part.r, mode: p.noGuide ? 'sil' : 'hole' });
       return `<g class="slot" data-slot="${j}" transform="translate(${part.x} ${part.y})">${body}</g>`;
     }).join('');
     holeEl.innerHTML = `<svg viewBox="${p.bb.x} ${p.bb.y} ${p.bb.w} ${p.bb.h}" width="${p.bb.w * K}" height="${p.bb.h * K}" aria-label="あな">${parts}</svg>`;
@@ -769,12 +875,13 @@
       });
     }
     if (slot < 0) return null;
-    return Object.assign(holeTargetRect(slot), { slot });
+    return Object.assign(holeTargetRect(slot), { slot, px: x, py: y });
   }
 
   function markZone(z) {
-    holeEl.classList.toggle('near', !!z && Q.p.type !== 'compose');
-    holeEl.querySelectorAll('.slot').forEach((g) => g.classList.toggle('hover', !!z && Number(g.dataset.slot) === z.slot));
+    // 点線なし（レベル5）では、どのパーツに入るかが分からないよう穴全体を明るくする
+    holeEl.classList.toggle('near', !!z && (Q.p.type !== 'compose' || !!Q.p.noGuide));
+    holeEl.querySelectorAll('.slot').forEach((g) => g.classList.toggle('hover', !!z && !Q.p.noGuide && Number(g.dataset.slot) === z.slot));
   }
 
   function returnHome(d) {
@@ -812,6 +919,17 @@
     } else if (p.type === 'rotate') {
       ok = sameOrient(pc.key, pc.rot, p.hole.rot);
     } else {
+      if (p.noGuide) {
+        // 点線なし：同じ形・同じ向きの空いた場所のうち、指に近いところに入る
+        let best = -1, bd = Infinity;
+        p.comp.parts.forEach((q, j) => {
+          if (p.filled[j] || q.s !== pc.key || !sameOrient(pc.key, pc.rot, q.r)) return;
+          const t = holeTargetRect(j);
+          const dd = Math.hypot(t.cx - z.px, t.cy - z.py);
+          if (dd < bd) { bd = dd; best = j; }
+        });
+        if (best >= 0 && bd < 75 * K) z = Object.assign(holeTargetRect(best), { slot: best });
+      }
       const part = p.comp.parts[z.slot];
       ok = pc.key === part.s && sameOrient(pc.key, pc.rot, part.r);
     }
@@ -866,7 +984,7 @@
     p.comp.parts.forEach((part, j) => {
       const g = svg.querySelector(`.slot[data-slot="${j}"]`);
       const f = p.filled[j];
-      g.innerHTML = f ? shapeSVG(part.s, { rot: part.r, color: f.color }) : shapeSVG(part.s, { rot: part.r, mode: 'hole' });
+      g.innerHTML = f ? shapeSVG(part.s, { rot: part.r, color: f.color }) : shapeSVG(part.s, { rot: part.r, mode: p.noGuide ? 'sil' : 'hole' });
       g.classList.remove('hover');
     });
   }
@@ -898,7 +1016,7 @@
     Q.i += 1;
     renderProgress();
     later(1500, () => {
-      if (Q.i >= ROUND_N) endRound();
+      if (Q.i >= Q.n) endRound();
       else renderPuzzle();
     });
   }
@@ -933,7 +1051,7 @@
   function endRound() {
     const rec = todayRec(true);
     rec.rounds += 1;
-    rec.puzzles += ROUND_N;
+    rec.puzzles += Q.n;
     rec.mistakes += Q.mistakes;
     rec.ms += Q.ms;
     data.rounds.push({ ts: Date.now(), level: Q.level, mistakes: Q.mistakes, ms: Math.round(Q.ms) });
@@ -941,6 +1059,7 @@
     saveData();
 
     const limited = limitReached();
+    $('#end-shapes').style.gridTemplateColumns = Q.done.length > 8 ? 'repeat(5, var(--mini, 84px))' : '';
     $('#end-shapes').innerHTML = Q.done.map((s, n) => s.replace('<svg ', `<svg style="animation-delay:${n * 0.08}s" `)).join('');
     $('#btn-again').hidden = limited;
     $('#end-limit').hidden = !limited;
@@ -1017,7 +1136,7 @@
 
     const sug = $('#level-suggest');
     const recent = data.rounds.filter((r) => r.level === Number(s.level)).slice(-3);
-    const ready = s.level < 5 && recent.length === 3 && recent.reduce((a, r) => a + r.mistakes, 0) <= 2;
+    const ready = s.level < MAX_LEVEL && recent.length === 3 && recent.reduce((a, r) => a + r.mistakes, 0) <= 2;
     sug.hidden = !ready;
     if (ready) sug.textContent = `直近3回でまちがいがほとんどありません。レベル${Number(s.level) + 1}を試してもよさそうです。`;
 

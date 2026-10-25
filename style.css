@@ -309,7 +309,7 @@ body.no-gear .gear { display: none; }
 .pgrid { display: grid; grid-template-columns: 1fr 1.25fr; gap: 20px; align-items: start; }
 .pcard { background: var(--parent-card); border: 1px solid var(--parent-line); border-radius: 14px; padding: 6px 20px 20px; }
 .pcard h3 { font-size: 16px; margin: 18px 0 10px; color: #444; }
-.seg { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.seg { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
 .seg button {
   border: 1.5px solid var(--parent-line);
   background: #fff;
@@ -435,4 +435,13 @@ body.compact .title-art svg { width: 54px; height: 54px; }
 @media (max-width: 700px) {
   .pgrid { grid-template-columns: 1fr; }
   .parent-inner { padding: 16px 14px 28px; }
+}
+
+/* ---------- v1.4：点線なしの穴・レベル6 ---------- */
+.hole.near .holefill { fill: #BCD0EE; }
+.hole.near .holefill:not([stroke-dasharray]) { stroke: #BCD0EE; }
+.slot.hover .holefill { fill: #BCD0EE; }
+body.compact .end-shapes { --mini: 54px; }
+@media (max-width: 700px) {
+  .seg { grid-template-columns: repeat(3, 1fr); }
 }
